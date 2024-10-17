@@ -1,4 +1,7 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+## Recommended
+Installing Nix package manager is recommended for this project. [nix](https://github.com/DeterminateSystems/nix-installer)
+Also installing direnv for convinience is recommended. [direnv](https://direnv.net/)
 
 ## Getting Started
 

@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { network } from '../networking/NetworkManager';
+import { voice } from '../voice/VoiceManager';
 
 const PLAYER_SPEED = 120;
 const LERP_SPEED = 0.15;
@@ -19,6 +20,7 @@ export class GameScene extends Phaser.Scene {
     private wallLayer!: Phaser.Tilemaps.TilemapLayer | Phaser.Tilemaps.TilemapGPULayer;
     private remotePlayers = new Map<string, RemotePlayer>();
     private currentDirection = 'down';
+    private isNetworkConnected = false;
 
     constructor() {
         super('Game');
@@ -49,6 +51,13 @@ export class GameScene extends Phaser.Scene {
             const spawn = await network.connect();
             spawnX = spawn.x;
             spawnY = spawn.y;
+            this.isNetworkConnected = true;
+
+            try {
+                await voice.start(network);
+            } catch (voiceError) {
+                console.warn('Voice initialization failed:', voiceError);
+            }
         } catch (err) {
             console.warn('Could not connect to server, playing offline:', err);
             // Fall back to tilemap spawn point
@@ -75,6 +84,11 @@ export class GameScene extends Phaser.Scene {
             S: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.S),
             D: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.D),
         };
+
+        this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+            voice.stop();
+            network.disconnect();
+        });
     }
 
     update() {
@@ -137,6 +151,10 @@ export class GameScene extends Phaser.Scene {
             direction: state.direction,
             isMoving: state.isMoving,
         });
+
+        if (this.isNetworkConnected) {
+            voice.onPeerJoined(sessionId);
+        }
     }
 
     private onPlayerChange(sessionId: string, state: { x: number; y: number; direction: string; isMoving: boolean }) {
@@ -152,6 +170,8 @@ export class GameScene extends Phaser.Scene {
     }
 
     private onPlayerRemove(sessionId: string) {
+        voice.onPeerLeft(sessionId);
+
         const remote = this.remotePlayers.get(sessionId);
         if (remote) {
             remote.sprite.destroy();

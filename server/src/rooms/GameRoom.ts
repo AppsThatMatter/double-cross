@@ -13,6 +13,28 @@ interface MoveMessage {
     isMoving: boolean;
 }
 
+type VoiceSessionDescription = {
+    type: 'offer' | 'answer';
+    sdp: string;
+};
+
+type VoiceIceCandidate = {
+    candidate: string;
+    sdpMid?: string | null;
+    sdpMLineIndex?: number | null;
+    usernameFragment?: string;
+};
+
+type VoiceSignalPayload =
+    | { type: 'offer'; sdp: VoiceSessionDescription }
+    | { type: 'answer'; sdp: VoiceSessionDescription }
+    | { type: 'ice-candidate'; candidate: VoiceIceCandidate };
+
+interface VoiceSignalMessage {
+    to: string;
+    data: VoiceSignalPayload;
+}
+
 export class GameRoom extends Room<GameState> {
     private spawnPoints = [
         { x: 160, y: 160 },
@@ -42,6 +64,20 @@ export class GameRoom extends Room<GameState> {
 
             player.direction = message.direction;
             player.isMoving = message.isMoving;
+        });
+
+        // Relay voice signaling messages between peers.
+        this.onMessage('voice:signal', (client: Client, message: VoiceSignalMessage) => {
+            if (!message?.to || !message?.data) return;
+            if (message.to === client.sessionId) return;
+
+            const target = this.clients.find((c) => c.sessionId === message.to);
+            if (!target) return;
+
+            target.send('voice:signal', {
+                from: client.sessionId,
+                data: message.data,
+            });
         });
     }
 

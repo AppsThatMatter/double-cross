@@ -13,7 +13,7 @@ export interface PlayerState {
 export type PlayerChangeCallback = (sessionId: string, player: PlayerState) => void;
 export type PlayerRemoveCallback = (sessionId: string) => void;
 
-class NetworkManager {
+export class NetworkManager {
     private client: Client;
     private room: Room | null = null;
     private sendInterval: ReturnType<typeof setInterval> | null = null;
@@ -26,6 +26,8 @@ class NetworkManager {
     private onPlayerAdd: PlayerChangeCallback | null = null;
     private onPlayerChange: PlayerChangeCallback | null = null;
     private onPlayerRemove: PlayerRemoveCallback | null = null;
+    private messageSubscribers = new Map<string | number, Set<(message: unknown) => void>>();
+    private anyMessageSubscribers = new Set<(type: string | number, message: unknown) => void>();
 
     public sessionId: string | null = null;
 
@@ -36,6 +38,21 @@ class NetworkManager {
     async connect(): Promise<{ x: number; y: number }> {
         this.room = await this.client.joinOrCreate('game');
         this.sessionId = this.room.sessionId;
+
+        // Route room messages through a local pub/sub layer so additional systems
+        // (voice, gameplay events, etc.) can subscribe without owning Room directly.
+        this.room.onMessage('*', (type, message) => {
+            const typedSet = this.messageSubscribers.get(type);
+            if (typedSet) {
+                for (const callback of typedSet) {
+                    callback(message);
+                }
+            }
+
+            for (const callback of this.anyMessageSubscribers) {
+                callback(type, message);
+            }
+        });
 
         // Wait for initial state to be received
         await new Promise<void>((resolve) => {
@@ -95,6 +112,48 @@ class NetworkManager {
         this.localIsMoving = isMoving;
     }
 
+    onMessage<T = unknown>(type: string | number, callback: (message: T) => void): () => void {
+        let callbacks = this.messageSubscribers.get(type);
+        if (!callbacks) {
+            callbacks = new Set();
+            this.messageSubscribers.set(type, callbacks);
+        }
+
+        const wrapped = callback as (message: unknown) => void;
+        callbacks.add(wrapped);
+
+        return () => {
+            callbacks.delete(wrapped);
+            if (callbacks.size === 0) {
+                this.messageSubscribers.delete(type);
+            }
+        };
+    }
+
+    onAnyMessage(callback: (type: string | number, message: unknown) => void): () => void {
+        this.anyMessageSubscribers.add(callback);
+        return () => {
+            this.anyMessageSubscribers.delete(callback);
+        };
+    }
+
+    sendMessage<T = unknown>(type: string | number, message: T) {
+        this.room?.send(type, message);
+    }
+
+    getRemoteSessionIds(): string[] {
+        if (!this.room) return [];
+
+        const result: string[] = [];
+        (this.room.state.players as Map<string, PlayerState>).forEach((_player, sessionId) => {
+            if (sessionId !== this.sessionId) {
+                result.push(sessionId);
+            }
+        });
+
+        return result;
+    }
+
     private sendPosition() {
         if (!this.room) return;
 
@@ -115,6 +174,8 @@ class NetworkManager {
         if (this.sendInterval) clearInterval(this.sendInterval);
         this.room?.leave();
         this.room = null;
+        this.messageSubscribers.clear();
+        this.anyMessageSubscribers.clear();
     }
 }
 
